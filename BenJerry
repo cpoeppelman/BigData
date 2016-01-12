@@ -1,0 +1,150 @@
+#### Purchases of Ben and Jerry's Ice Cream
+benjer = read.csv("BenAndJerry.csv")
+library("ggplot2")
+
+## explore a bit
+names(benjer)
+
+hist(benjer$age_of_female_head)
+hist(benjer$age_of_male_head)
+hist(benjer$age_and_presence_of_children)
+benjer$kids <- benjer$age_and_presence_of_children<9
+benjer$age <- as.numeric(benjer$age_of_male_head > benjer$age_of_female_head)
+benjer$head_age <- benjer$age*benjer$age_of_male_head + (1-benjer$age)*benjer$age_of_female_head
+plot(benjer$age)
+
+##plot by income
+hist(benjer$household_income)
+table(benjer$race,benjer$flavor_descr)
+boxplot(priceper1~benjer$type_of_residence)
+
+##plot of sales by age
+m <- c("<25","25-29","30-34","35-39","40-44","45-49","50-54","55-64","65+")
+table(benjer$head_age)
+m <- cbind(m,table(benjer$head_age))
+for(i in 1:nrow(benjer))
+{
+  f <- benjer$head_age[i]
+  benjer$agegroup[i]<-m[f]
+}
+barp <- table(benjer$kids,benjer$agegroup)
+barplot(barp, main="Sales with or without kids in house", xlab="Age Group", ylab="Frequency", col=c("blue","red"))
+legend("topleft", c("no kids under 18", "kids under 18"), fill=c("blue","red"))
+sum(benjer$age_of_male_head>0)
+sum(benjer$age_of_female_head>0)
+
+##72% of customers don't have children under 18 present
+sum(benjer$age_and_presence_of_children==9)/nrow(benjer)
+sum(benjer$age_and_presence_of_children<9)
+
+##trends in coupon usage
+sum(benjer$coupon_value>0)
+coup <- (sum(benjer$household_income==30 & benjer$coupon_value>0))
+table(benjer$household_income, benjer$coupon_value>0)
+levels(benjer$household_income)
+a <- c(3,4,6,8,10,11,13,15,16,17,18,19,21,23,26,27,28,29,30)
+b <- c(1:19)
+for(i in 1:19)
+{
+  b[i]<-(sum(benjer$household_income==a[i] & benjer$coupon_value>0))/sum(benjer$household_income==a[i])
+}
+plot(b)
+
+
+## create a new variable for price per unit
+priceper1 = (benjer$price_paid_deal + benjer$price_paid_non_deal)/benjer$quantity
+pp16 = subset(benjer, benjer$size1_descr=="16.0 MLOZ", select = c(price_paid_deal, price_paid_non_deal,quantity))
+pp32 = subset(benjer, benjer$size1_descr=="32.0 MLOZ", select = c(price_paid_deal, price_paid_non_deal,quantity))
+pp16$price = (pp16$price_paid_deal + pp16$price_paid_non_deal)/pp16$quantity
+pp32$price = (pp32$price_paid_deal + pp32$price_paid_non_deal)/pp32$quantity
+
+hist(pp32$price, col=rgb(1,0,0,1/4), freq=FALSE, breaks=seq(0,10,by=0.5), xlab="Price per Quantity", main="Comparing 16oz vs  32oz packages")
+hist(pp16$price, col=rgb(0,0,1,1/4), add=T, freq=FALSE, breaks=seq(0,10,by=0.5), xlab="Price per Quantity", main="Comparing 16oz vs  32oz packages")
+legend("topright", c("16oz Pkg", "32oz pkg"), fill=c("blue","red"))
+
+table(benjer$size1_descr)
+levels(benjer$size1_descr)
+y <- log(1+priceper1)
+
+## grab some covariates of interest
+## we'll create a properly formatted data.frame
+x <- benjer[,c("flavor_descr","size1_descr","household_income","household_size")]
+
+## relevel 'flavor' to have baseline of vanilla
+x$flavor_descr <- relevel(x$flavor_descr,"VAN")
+## coupon usage
+x$usecoup = factor(benjer$coupon_value>0)
+x$couponper1 <- benjer$coupon_value/benjer$quantity
+## organize some demographics
+x$region <- factor(benjer$region, levels=1:4, labels=c("East","Central","South","West"))
+x$married <- factor(benjer$marital_status==1)
+x$race <- factor(benjer$race,levels=1:4,labels=c("white","black","asian","other"))
+x$hispanic_origin <- benjer$hispanic_origin==1
+x$microwave <- benjer$kitchen_appliances %in% c(1,4,5,7)
+x$dishwasher <- benjer$kitchen_appliances %in% c(2,4,6,7)
+x$sfh <- benjer$type_of_residence==1
+x$internet <- benjer$household_internet_connection==1
+x$tvcable <- benjer$tv_items>1
+
+## figure out price per oz
+x$size <- benjer$size1_descr=="16.0 MLOZ"
+table(x$size)
+y2 <- priceper1 / (32 - x$size*16)
+hist(y2)
+
+## combine x and y, just to follow my recommended `way to use glm'
+## cbind is `column bind'.  It takes two dataframes and makes one.
+xy <- cbind(x,y)
+
+## run a correlation table of certain variables
+## v <- x[,c("household_income","household_size","usecoup","couponper1","region","married","race","hispanic_origin","microwave","dishwasher","sfh","internet","tvcable")]
+w <- x[,c("household_income","household_size","couponper1")]
+
+## fit the regression
+fit <- glm(y~., data=xy)
+summary(fit)
+
+
+## try another regression without the flavors
+fit2 <- glm(y~. -flavor_descr, data=xy)
+summary(fit2)
+
+
+## grab the non-intercept p-values from a glm
+## -1 to drop the intercept, 4 is 4th column
+pvals <- summary(fit)$coef[-1,4] 
+hist(pvals, breaks=seq(0,1,0.05), freq=FALSE)
+
+
+## source the fdr_cut function
+source("fdr.R")
+
+## find the cut
+# @ 10% FDR
+cutoff10 <- fdr_cut(pvals,q=.1,plotit=TRUE)
+print(cutoff10)
+print(sum(pvals<=cutoff10))
+# @ 5% FDR
+cutoff5 <- fdr_cut(pvals,q=.05,plotit=TRUE)
+print(cutoff5)
+print(sum(pvals<=cutoff5))
+
+# @ 1% FDR
+cutoff1 <- fdr_cut(pvals,q=.01,plotit=TRUE)
+print(cutoff1)
+print(sum(pvals<=cutoff1))
+# @ 1/10% FDR
+cutoff01 <- fdr_cut(pvals,q=.001,ploit=TRUE)
+print(cutoff01)
+print(sum(pvals<=cutoff01))
+
+# determine false positives at 5% confidence
+k <- sum(pvals<0.05)
+n <- sum(pvals<2)
+q <- n*.05/k
+print(q)
+## false discovery rate at 95% confidence level = q
+
+# determine most significant p-values
+names(pvals)[order(pvals)[1:sum(pvals<=cutoff01)]] 
+pvals[order(pvals)[1:sum(pvals<=cutoff01)]]
