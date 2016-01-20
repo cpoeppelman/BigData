@@ -1,0 +1,179 @@
+##### ******** Mortgage and Home Sales Data ******** #####
+
+## Read in the data
+setwd("~/Booth/Classes/41201 Big Data/Class Data")
+homes <- read.csv("homes2004.csv")
+
+# create a var for downpayment being greater than 20%
+homes$gt20dwn <- 
+  factor(0.2<(homes$LPRICE-homes$AMMORT)/homes$LPRICE)
+table(homes$gt20dwn)
+
+# Adam's cleanup code
+homes <- read.csv("homes2004.csv")
+cleanhomes <- subset(homes, homes$AMMORT<(homes$LPRICE+250000)) ###Removing where mortgage is $250k greater than price bought
+sum(homes$AMMORT>=(homes$LPRICE+0) & homes$MATBUY=="Y")
+cleanhomes2 <- subset(cleanhomes, cleanhomes$ZINC2>=0)           ###Removing negative household incomes
+sum(homes$ZINC2<0)
+cleanhomes3 <- subset(cleanhomes2, cleanhomes2$LPRICE>1000)     ###Removing price paid less than $1k
+sum(homes$LPRICE<=1000)
+cleanhomes4 <- subset(cleanhomes3, cleanhomes3$VALUE>1000)      ###Removing market values less than $1K
+sum(homes$VALUE<=1000)
+homes <- cleanhomes4
+
+# plot by education level
+levels(homes$HHGRAD)
+homes$HHGRAD <- factor(homes$HHGRAD, levels(homes$HHGRAD)[c(1,5,2,3,4)])
+plot(gt20dwn ~ HHGRAD, data=homes,
+     col=c(2,5), xlab="Buyer's Highest Education Level", 
+     ylab="Greater than 20% down", main="20% Down Payment by Education Level")
+
+#looking at home value
+plot((homes$AMMORT/homes$ZINC2) ~ homes$ZINC2, ylim=c(0,30), xlim=c(0,300000), col=c('Gray','Red')[homes$gt20dwn],
+     xlab="Income Level - $", ylab="Mortgage / Income Ratio", main="Comparing >20% down payments by mortgage:income ratio") 
+legend("topright",legend=c("<20% down payment",">=20% down payment"), fill=c("Gray","Red"))
+
+# plot by bathrooms and value
+par(mfrow=c(1,2)) 
+plot(VALUE ~ factor(BATHS), 
+     col=rainbow(8), data=homes[homes$VALUE<=1500000,],
+     xlab="number of bathrooms", ylab="home value")
+plot(VALUE ~ factor(BEDRMS), 
+     col=rainbow(8), data=homes[homes$VALUE<=1500000,],
+     xlab="number of bedrooms", ylab="home value")
+
+
+# look at different factors
+hist(homes$LPRICE-homes$VALUE) # try to figure out values of homes
+plot(homes$ZADULT ~ homes$HHGRAD) # No HS has most variation
+
+homes[homes$AMMORT>(homes$LPRICE+250000),c("AMMORT","LPRICE","VALUE","FRSTHO","MATBUY","DWNPAY")]
+sum(homes$AMMORT>(homes$LPRICE+50000)) ## there's 3,815 properties where the AMMORT is > LPRICE huh??
+homes[homes$ZINC2<0,c("AMMORT","LPRICE","VALUE","FRSTHO","MATBUY","DWNPAY","gt20dwn","ZINC2")]
+
+homes[homes$AMMORT>homes$VALUE,c("AMMORT","LPRICE","VALUE")] 
+homes[homes$VALUE<100,c("AMMORT","LPRICE","VALUE")]
+
+## code hints 
+## Q2 
+# regress log(VALUE) on everything except AMMORT and LPRICE 
+pricey <- glm(log(VALUE) ~ .-gt20dwn-AMMORT-LPRICE, data=homes)
+summary(pricey)
+1 - (pricey$deviance/pricey$null.deviance)
+# extract pvalues
+pvals <- summary(pricey)$coef[-1,4]
+
+# regress log(VALUE) on everything except AMMORT and LPRICE 
+pricey20 <- glm(log(VALUE) ~ .-AMMORT-LPRICE, data=homes)
+summary(pricey20)
+1 - (pricey20$deviance/pricey20$null.deviance)
+# extract pvalues
+pvals <- summary(pricey20)$coef[-1,4]
+
+## source the fdr_cut function
+source("fdr.R")
+
+# @ 10% FDR
+par(mfrow=c(1,1)) 
+cutoff10 <- fdr_cut(pvals,q=.1,plotit=TRUE)
+print(cutoff10)
+print(sum(pvals<=cutoff10))
+
+# example: those variable insignificant at alpha=0.2
+sum(pvals<=cutoff10) #pvals significant at p-value cutoff
+length(pvals) # number of pvals
+names(pvals)[pvals>cutoff10] #which pvals to remove
+
+
+# you'll want to replace .2 with your FDR cutoff
+# you can use the `-AMMORT' type syntax to drop variables
+
+#Rerun the regression
+pricey2 <- glm(log(VALUE) ~ .-gt20dwn-AMMORT-LPRICE-EGREEN-ETRANS-ODORA-PER-ZADULT-NUNITS, data=homes)
+summary(pricey2)
+pvals2 <- summary(pricey2)$coef[-1,4]
+length(pvals2)
+1 - (pricey2$deviance/pricey2$null.deviance)
+# try the cutoff function for the hell of it on the pricey2 fit
+cut2off10 <- fdr_cut(pvals2,q=.1,plotit=TRUE)
+print(cut2off10)
+print(sum(pvals2<=cut2off10))
+sum(pvals2<=cut2off10) #all the p-values below the cutoff
+length(pvals2) # number of pvals
+names(pvals2)[pvals2>cut2off10] 
+
+
+## Q3: 
+# - don't forget family="binomial"!
+# - use +A*B in forumula to add A interacting with B
+
+dpayment <- glm(gt20dwn ~ .-AMMORT-LPRICE, data=homes, family='binomial')
+summary(dpayment)
+b <- coef(dpayment)
+b["BATHS"]
+b["FRSTHOY"]
+
+#rerun the logistic regression with interaction between BATHS and FRSTHO
+dpayment2 <- glm(gt20dwn ~ .+BATHS*FRSTHO-AMMORT-LPRICE, data=homes, family='binomial')
+summary(dpayment2)
+1 - (dpayment2$deviance/dpayment2$null.deviance)
+b <- coef(dpayment2)
+b["BATHS"] 
+b["BATHS"] + b["BATHS:FRSTHOY"]
+exp(b["BATHS"] )
+exp(b["BATHS"] + b["BATHS:FRSTHOY"])
+
+
+## Q4
+# this is your training sample
+gt100 <- which(homes$VALUE>1e5)
+hp100 <- subset(homes, homes$VALUE <=1e5)
+
+train100 <- glm(gt20dwn ~ .-AMMORT-LPRICE, homes[gt100,], family='binomial')
+summary(train100)
+1 - (train100$deviance/train100$null.deviance)
+
+pred100 <- predict(train100, newdata=homes[-gt100,], type="response")
+
+
+# ybar and null deviance
+source("deviance.R")
+
+ybar <- mean(homes$gt20dwn[-gt100]==TRUE)
+D <- deviance(y=homes$gt20dwn[-gt100],pred=pred100, family="binomial")
+D0 <- deviance(y=homes$gt20dwn[-gt100], pred=ybar, family="binomial")
+1-D/D0
+
+#plot predictions
+par(mfrow=c(1,2)) 
+plot(pred100 ~ homes$gt20dwn[-gt100],
+     xlab="Out-of-sample, homes<=$100k", ylim=c(0,1), ylab=c("predicted probability of 20% downpayment"), 
+     col=c("blue","red"))
+
+## compare versus homes >$100k
+pred2 <- predict(train100, newdata=homes[gt100,], type="response")
+plot(pred2 ~ homes$gt20dwn[gt100], xlab="In-sample, homes>$100k", ylim=c(0,1), ylab=c("predicted probability of 20% downpayment"), 
+     col=c("blue","red"))
+
+# run a new regression/prediction by randomizing the data
+leaveout <- sample(1:nrow(homes), length(gt100)) ## sample length(gt100) random home prices
+trainrand <- glm(gt20dwn ~ .-AMMORT-LPRICE, homes[leaveout,], family='binomial')
+summary(trainrand)
+1 - (trainrand$deviance/trainrand$null.deviance)
+
+predrand <- predict(trainrand, newdata=homes[-leaveout,], type="response")
+
+ybar2 <- mean(homes$gt20dwn[-leaveout]==TRUE)
+D2 <- deviance(y=homes$gt20dwn[-leaveout],pred=predrand, family="binomial")
+D02 <- deviance(y=homes$gt20dwn[-leaveout], pred=ybar, family="binomial")
+1-D2/D02
+
+#compare by plots
+par(mfrow=c(1,2)) 
+plot(predrand ~ homes$gt20dwn[-leaveout],
+     xlab="Out-of-sample, randomized", ylim=c(0,1), ylab=c("predicted probability of 20% downpayment"), 
+     col=c("blue","red"))
+
+predrand2 <- predict(trainrand, newdata=homes[leaveout,], type="response")
+plot(predrand2 ~ homes$gt20dwn[leaveout], xlab="In-sample, randomized", ylim=c(0,1), ylab=c("predicted probability of 20% downpayment"), 
+     col=c("blue","red"))
