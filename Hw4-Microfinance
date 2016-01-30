@@ -1,0 +1,140 @@
+## microfinance network 
+## data from BANERJEE, CHANDRASEKHAR, DUFLO, JACKSON 2012
+
+## data on 8622 households
+setwd("~/Booth/Classes/41201 Big Data/Class Data")
+hh <- read.csv("microfi_households.csv", row.names="hh")
+hh$village <- factor(hh$village)
+
+## We'll kick off with a bunch of network stuff.
+## This will be covered in more detail in lecture 6.
+## get igraph off of CRAN if you don't have it
+## install.packages("igraph")
+## this is a tool for network analysis
+## (see http://igraph.sourceforge.net/)
+library(igraph)
+edges <- read.table("microfi_edges.txt", colClasses="character")
+## edges holds connections between the household ids
+hhnet <- graph.edgelist(as.matrix(edges))
+hhnet <- as.undirected(hhnet) # two-way connections.
+
+## igraph is all about plotting.  
+V(hhnet) ## our 8000+ household vertices
+## Each vertex (node) has some attributes, and we can add more.
+V(hhnet)$village <- as.character(hh[V(hhnet),'village'])
+## we'll color them by village membership
+vilcol <- rainbow(nlevels(hh$village))
+names(vilcol) <- levels(hh$village)
+V(hhnet)$color = vilcol[V(hhnet)$village]
+## drop HH labels from plot
+V(hhnet)$label=NA
+
+# graph plots try to force distances proportional to connectivity
+# imagine nodes connected by elastic bands that you are pulling apart
+# The graphs can take a very long time, but I've found
+# edge.curved=FALSE speeds things up a lot.  Not sure why.
+
+## we'll use induced.subgraph and plot a couple villages 
+village1 <- induced.subgraph(hhnet, v=which(V(hhnet)$village=="1"))
+village33 <- induced.subgraph(hhnet, v=which(V(hhnet)$village=="33"))
+
+# vertex.size=3 is small.  default is 15
+plot(village1, vertex.size=3, edge.curved=FALSE)
+plot(village33, vertex.size=3, edge.curved=FALSE)
+
+######  now, on to your homework stuff
+
+library(gamlr)
+
+## match id's; I call these 'zebras' because they are like crosswalks
+zebra <- match(rownames(hh), V(hhnet)$name)
+
+## calculate the `degree' of each hh: 
+##  number of commerce/friend/family connections
+degree <- degree(hhnet)[zebra]
+names(degree) <- rownames(hh)
+degree[is.na(degree)] <- 0 # unconnected houses, not in our graph
+
+## if you run a full glm, it takes forever and is an overfit mess
+# > summary(full <- glm(loan ~ degree + .^2, data=hh, family="binomial"))
+# Warning messages:
+# 1: glm.fit: algorithm did not converge 
+# 2: glm.fit: fitted probabilities numerically 0 or 1 occurred 
+
+
+## QUESTION 1 - transform degree to create our treatment variable d
+hist(degree)
+d <- degree
+row <- d>0
+d[row] <- log(degree[row]) # create variable d as a log of degree. Log to show change on percent change in connections.
+sum(d>0)
+hist(d)
+length(d)
+
+## QUESTION 2 - Build a model to predict d from x, our controls.
+library(gamlr)
+x <- hh[,-1] # remove the loan variable from hh
+#x$village <- factor(x$village)
+#x$religion <- factor(x$religion)
+#x$roof <- factor(x$roof)
+#x$ownership <- factor(x$ownership)
+#dim(x)
+#summary(x)
+x = sparse.model.matrix(~ ., data=x)
+#dim(x)
+
+## now, what if we explicitly include dhat confounding:
+treat <- gamlr(x,d)
+plot(treat)
+
+dhat <- predict(treat, x, type='response') 
+plot(dhat,d,bty="n",pch=21,bg=8) 
+cor(drop(dhat),d)^2
+
+
+## QUESTION 3 - Use predictions from [2] in an estimator for the effect of d on a loan
+loan <- hh[,1]
+# re-run lasso, with this (2nd column) included unpenalized
+causal <- gamlr(cBind(d,dhat,x),loan,free=2, family="binomial")
+coef(causal)["d",] # Non-zero coefficient
+plot(causal)
+# coef(causal)
+dAIC <- coef(causal, select=which.min(AIC(causal)))["d",] ## and BIC instead
+dAIC ## even significant in a BIC model
+dBIC <- coef(causal, select=which.min(BIC(causal)))["d",] ## and BIC instead
+dBIC ## even significant in a BIC model
+
+
+
+## QUESTION 4 - Compare results from [3] to naive lasso for loan on d and x
+naive <- gamlr(cBind(d,x),loan, family="binomial")
+coef(naive)["d",] # effect is significant in this model too
+
+
+
+## QUESTION 5 - Bootstrap estimator from [3] and describe the uncertainty
+n <- nrow(x)
+
+gamb <- c() # empty gamma
+for(b in 1:180){
+  ## create a matrix of resampled indices
+  ib <- sample(1:n, n, replace=TRUE)
+  ## create the resampled data
+  xb <- x[ib,]
+  db <- d[ib]
+  loanb <- loan[ib]
+  ## run the treatment regression
+  treatb <- gamlr(xb,db)
+  dhatb <- predict(treatb, xb, type="response")
+  
+  fitb <- gamlr(cBind(db,dhatb,xb),loanb,free=2, family="binomial")
+  gamb <- c(gamb,coef(fitb)["db",])
+  print(b)
+}
+
+summary(gamb) 
+hist(gamb[1:20], main="20 samples", xlab="d coeff")
+hist(gamb, main="200 samples", xlab="d coeff")
+mean(gamb)
+
+## BONUS
