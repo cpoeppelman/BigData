@@ -1,0 +1,162 @@
+setwd("~/Booth/Classes/41201 Big Data/Class Data")
+
+## actors network example
+
+library(igraph)
+
+### GRAPH
+## read in a graph in the `graphml' format: xml for graphs.
+## it warns about pre-specified ids, but we want this here
+## (these ids match up with the castlists in movies.txt)
+actnet <- read.graph("actors.graphml",format="graphml")
+
+### TRANSACTION
+## read in the table of actor ids for movies
+## this is a bit complex, because the movie names
+## contain all sorts of special characters.
+movies <- read.table("movies.txt", sep="\t", 
+                     row.names=1, as.is=TRUE, comment.char="", quote="")
+## it's a 1 column matrix.  treat it like a vector
+movies <- drop(as.matrix(movies))
+## each element is a comma-separated set of actor ids.  
+## use `strsplit' to break these out
+movies <- strsplit(movies,",")
+## and finally, match ids to names from actnet
+casts <- lapply(movies, 
+                function(m) V(actnet)$name[match(m,V(actnet)$id)])
+## check it
+casts['True Romance']
+## format as arules transaction baskets
+library(arules)
+casttrans <- as(casts, "transactions")
+
+
+## Set up STM information
+castsize <- unlist(lapply(casts, function(m) length(m)))
+## see ?rep.int: we're just repeating movie names for each cast member
+acti <- factor(rep.int(names(casts),times=castsize))
+## actors
+actj <- factor(unlist(casts), levels=V(actnet)$name)
+## format as STM (if you specify without `x', its binary 0/1)
+actmat <- sparseMatrix(i=as.numeric(acti),j=as.numeric(actj),
+                       dimnames=list(movie=levels(acti),actor=levels(actj)))
+
+## count the number of appearences by actor
+nroles <- colSums(actmat)
+names(nroles) <- colnames(actmat)
+
+
+## Q1 - Plot the actors network
+V(actnet)["Bacon, Kevin"]$color <- "pink"
+plot(actnet, edge.curved=FALSE) ## takes forever, looks messy
+plot(actnet, vertex.label=NA, vertex.size=3, edge.width=2, edge.color="gray", edge.curved=FALSE)
+plot(actnet, vertex.label = ifelse(names(degree(actnet)) == "Bacon, Kevin", "K Bacon", NA), 
+     vertex.size=ifelse(names(degree(actnet)) == "Bacon, Kevin", 10, 3), edge.width=1, edge.color="gray", edge.curved=FALSE)
+
+## Q2 - Plot the neighborhoods for “Bacon, Kevin” at orders 1-3. 
+## How does the size of the network change with order?
+
+# Order = 1
+kbacon <- graph.neighborhood(actnet, 1, V(actnet)["Bacon, Kevin"])[[1]] 
+V(kbacon)$color <- "blue"
+V(kbacon)["Bacon, Kevin"]$color <- "red"
+plot(kbacon, vertex.label=NA, vertex.frame.color=0, edge.arrow.width=.75, vertex.size=5)
+title(main="Bacon Neighborhood - Order = 1")
+
+# Order = 2
+kbacon2 <- graph.neighborhood(actnet, 2, V(actnet)["Bacon, Kevin"])[[1]] 
+V(kbacon2)$color <- "green"
+V(kbacon2)[V(kbacon)$name]$color <- "blue"
+V(kbacon2)["Bacon, Kevin"]$color <- "red"
+plot(kbacon2, vertex.label = ifelse(names(degree(kbacon2)) == "Bacon, Kevin", "K Bacon", NA), 
+     vertex.frame.color=0, edge.curved=FALSE, edge.arrow.width=0,
+     vertex.size=ifelse(V(kbacon2)$color == "red", 9, 3))
+title(main="Bacon Neighborhood - Order = 2")
+
+# Order = 3
+kbacon3 <- graph.neighborhood(actnet, 3, V(actnet)["Bacon, Kevin"])[[1]] 
+V(kbacon3)$color <- "yellow"
+V(kbacon3)[V(kbacon2)$name]$color <- "green"
+V(kbacon3)[V(kbacon)$name]$color <- "blue"
+V(kbacon3)["Bacon, Kevin"]$color <- "red"
+plot(kbacon3, vertex.label = ifelse(names(degree(kbacon3)) == "Bacon, Kevin", "K Bacon", NA), 
+     vertex.frame.color=0, edge.curved=FALSE, edge.arrow.width=0,
+     vertex.size=ifelse(V(kbacon3)$color == "red", 9, 3))
+title(main="Bacon Neighborhood - Order = 3")
+
+# Compare network sizes
+length(V(kbacon))
+length(V(kbacon2))
+length(V(kbacon3))
+
+
+
+## Q3 - Who were the most common actors? Who were most connected? 
+## Pick a pair of actors and describe the shortest path between them. 
+
+#Most common actors
+nroles <- nroles[order(-nroles)]
+nroles[1:5]
+
+#Most connected actors
+which.max(degree(actnet))
+degree(actnet)["Bacon, Kevin"]
+degree(actnet)["Reagan, Ronald"]
+degree(actnet)["Dobtcheff, Vernon"]
+
+length(nroles)
+
+nconnect <- degree(actnet)
+nconnect <- nconnect[order(-nconnect)]
+deg3 <- V(kbacon3)[V(kbacon3)$color == "yellow"]
+
+JtoB <- get.shortest.paths(actnet, from="Bacon, Kevin", to="Anderson, Pamela (I)")
+V(actnet)$name[JtoB$vpath[[1]]]
+
+E(actnet, path=JtoB$vpath[[1]])$color <- "green"
+plot(kbacon3, vertex.label = ifelse(names(degree(kbacon3)) == "Bacon, Kevin", "K Bacon", NA), 
+     vertex.frame.color=0, edge.curved=FALSE, edge.arrow.width=0,
+     vertex.size=ifelse(V(kbacon3)$color == "red", 9, 3))
+title(main="3 Degrees from Kevin Bacon to Pamela Anderson")
+
+
+## Q4 - Find pairwise actor-cast association rules with at least 0.01% support and 10% conﬁdence. 
+## Describe what you ﬁnd. 
+library(arules)
+
+# 0.01% support; 10% confidence
+actor_cast_assc <- apriori(casttrans, 
+      parameter=list(support=.0001, confidence=.1, maxlen=2))
+length(actor_cast_assc)
+nroles["Rock, The"]
+nroles["Austin, Steve (IV)"]
+
+## take a look
+inspect(actor_cast_assc)
+
+## Choose any subset you want. 
+inspect(subset(actor_cast_assc, subset=confidence > 0.99))
+inspect(subset(actor_cast_assc, subset=lhs%in%"Bacon, Kevin"))
+inspect(subset(actor_cast_assc, subset=rhs%in%"Bacon, Kevin"))
+
+## Bonus - What would be a regression based alternative to ARules? 
+## Execute it for a single RHS actor.
+
+#look at the actmat variable
+actmat[1:10,1:5]
+y <- actmat[,"Bacon, Kevin"]
+x <- actmat[,colnames(actmat)!="Bacon, Kevin"]
+dim(x)
+dim(actmat)
+
+library(gamlr)
+baconreg <- gamlr(x,y,family="binomial")
+plot(baconreg)
+B <- coef(baconreg)
+coef(baconreg)[1] # intercept
+exp(coef(baconreg)[1])
+B <- B[-1,]
+sum(B!=0)
+B[B!=0]
+B[c("McClurg, Edie","Cannon, Dyan","Broderick, Matthew (I)","Windom, William","Kinney, Terry","Anderson, Pamela (I)")]
+exp(coef(baconreg)[1]+B["McClurg, Edie"])/exp(coef(baconreg)[1]) #is this lift?? Lift of 76
