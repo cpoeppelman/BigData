@@ -1,0 +1,142 @@
+setwd("~/Booth/Classes/41201 Big Data/Class Data")
+library(textir) # to get the data
+library(maptpx) # for the topics function
+
+data(congress109)
+head(congress109Counts)
+congress109Counts[1:5,1:5]
+rownames(congress109Counts)
+colnames(congress109Counts)
+
+head(congress109Ideology)
+dim(congress109Ideology)
+?congress109
+
+## rename variables for ease of typing
+counts <- congress109Counts
+ideo <- congress109Ideology
+
+## [1] Fit K-means to speech text for K in 5,10,15,20,25. 
+# Use BIC to choose the K and interpret the selected model. 
+
+#scale the data first
+sc <- scale(counts)
+
+#run the k-means analysis
+#k=5
+ksc5 <- kmeans(sc,5)
+table(ksc5$cluster,ideo$party)
+barplot(table(ideo$party,ksc5$cluster),col=c("blue","green","red"),xlab="Cluster",ylab="Count",main="K=5 Cluster")
+legend("topleft",fill=c("blue","green","red"),legend=levels(ideo$party))
+
+#k=10
+ksc10 <- kmeans(sc,10)
+table(ksc10$cluster,ideo$party)
+barplot(table(ideo$party,ksc10$cluster),col=c("blue","green","red"),xlab="Cluster",ylab="Count",main="K=10 Cluster")
+legend("topleft",fill=c("blue","green","red"),legend=levels(ideo$party))
+
+#k=15
+ksc15 <- kmeans(sc,15)
+table(ksc15$cluster,ideo$party)
+barplot(table(ideo$party,ksc15$cluster),col=c("blue","green","red"),xlab="Cluster",ylab="Count",main="K=15 Cluster")
+legend("topleft",fill=c("blue","green","red"),legend=levels(ideo$party))
+
+#k=20
+ksc20 <- kmeans(sc,20)
+table(ksc20$cluster,ideo$party)
+barplot(table(ideo$party,ksc20$cluster),col=c("blue","green","red"),xlab="Cluster",ylab="Count",main="K=20 Cluster")
+legend("topleft",fill=c("blue","green","red"),legend=levels(ideo$party))
+
+#k=25
+ksc25 <- kmeans(sc,25)
+table(ksc25$cluster,ideo$party)
+barplot(table(ideo$party,ksc25$cluster),col=c("blue","green","red"),xlab="Cluster",ylab="Count",main="K=25 Cluster")
+legend("topleft",fill=c("blue","green","red"),legend=levels(ideo$party))
+
+# Use BIC to select K
+source("kIC.R") ## utility script
+
+kfit <- lapply(1:100, function(k) kmeans(sc,k))
+
+kaicc <- sapply(kfit,kIC)
+kbic <- sapply(kfit,kIC,"B")
+
+plot(kbic, xlab="K", ylab="IC", main="Selecting K by BIC", 
+     bty="n", type="l", lwd=2, col=4)
+abline(v=which.min(kbic),col=4)
+which.min(kbic)
+
+
+## [2] Fit a topic model for the speech counts. 
+# Use Bayes factors to choose the number of topics, and interpret your chosen model. 
+
+x <- as.simple_triplet_matrix(counts)
+# to fit, just give it the counts, number of `topics' K, and any other args
+tpc <- topics(x,K=10) 
+
+#get a sampling of words in a few topics
+rownames(tpc$theta)[order(tpc$theta[,1], decreasing=TRUE)[1:10]]
+rownames(tpc$theta)[order(tpc$theta[,2], decreasing=TRUE)[1:10]]
+rownames(tpc$theta)[order(tpc$theta[,3], decreasing=TRUE)[1:10]]
+
+
+tpcs <- topics(x,K=1*(5:25), verb=10) # selected the K=13 model
+summary(tpcs)
+plot(5:19, tpcs$BF, xlab="K Value", ylab="log BF", main="Bayes Factor to select K")
+
+library(wordcloud)
+par(mfrow=c(1,2))
+wordcloud(row.names(tpcs$theta), 
+          freq=tpcs$theta[,1], min.freq=0.004, col="maroon")
+wordcloud(row.names(tpcs$theta), 
+          freq=tpcs$theta[,2], min.freq=0.004, col="navy")
+
+
+## [3] Connect the unsupervised clusters to partisanship. 
+# I tabulate party membership by K-means cluster. Are there any non-partisan topics? 
+# I ﬁt topic regressions for each of party and repshare. Compare to regression onto phrase percentages: 
+
+
+
+#fit topic regression onto party
+library(gamlr)
+library(glmnet)
+
+#regress on if a congressmen would be republican
+y_rep <- ideo$party=="R"
+rownames(ideo[ideo$party=="I"])
+mean(y_rep)*length(y_rep)
+table(ideo$party)
+#logistic regression on topics
+regpartytopics.cv <- cv.gamlr(tpcs$omega, y_rep, family="binomial", lmr=0.005)
+#logistic regression on phrase %
+x3<-100*congress109Counts/rowSums(congress109Counts) # phrase percentages
+regpartywords.cv <- cv.gamlr(x3, y_rep, family="binomial",lmr=0.005)
+
+par(mfrow=c(1,2))
+plot(regpartytopics.cv)
+mtext("Repub? topic regression", font=2, line=2)
+plot(regpartywords.cv)
+mtext("Repub? phrase % regression", font=2, line=2)
+# max OOS R^2s
+max(1-regpartytopics.cv$cvm/regpartytopics.cv$cvm[1])
+max(1-regpartywords.cv$cvm/regpartywords.cv$cvm[1])
+
+
+#regress on repshare
+tpcreg <- gamlr(tpcs$omega, ideo$repshare)
+plot(tpcreg)
+#cv and compare to phrase percentages
+regtopics.cv <- cv.gamlr(tpcs$omega, ideo$repshare)
+## give it the word %s as inputs
+x3<-100*congress109Counts/rowSums(congress109Counts) # phrase percentages
+regwords.cv <- cv.gamlr(x3, ideo$repshare)
+
+par(mfrow=c(1,2))
+plot(regtopics.cv)
+mtext("topic regression", font=2, line=2)
+plot(regwords.cv)
+mtext("phrase % regression", font=2, line=2)
+# max OOS R^2s
+max(1-regtopics.cv$cvm/regtopics.cv$cvm[1])
+max(1-regwords.cv$cvm/regwords.cv$cvm[1])
